@@ -41,7 +41,7 @@ maturity must be: emerging, growing, or mature`
 <json>{"summary":"2-3 sentence overview","highlights":["finding 1","finding 2","finding 3"],"trend":"one sharp strategic insight","maturity":"emerging"}</json>
 maturity must be: emerging, growing, or mature`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("/api/anthropic", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
