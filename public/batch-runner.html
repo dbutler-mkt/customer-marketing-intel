@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Intel Batch Runner</title>
+<style>
+  body { background: #080808; color: #e8e8e8; font-family: 'DM Mono', monospace; padding: 40px; max-width: 700px; margin: 0 auto; }
+  h1 { font-size: 18px; color: #E8FF47; margin-bottom: 4px; }
+  p { color: #444; font-size: 11px; margin-bottom: 24px; }
+  button { background: #E8FF47; color: #000; border: none; padding: 10px 24px; font-family: monospace; font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 4px; margin-right: 10px; }
+  button:disabled { background: #333; color: #555; cursor: not-allowed; }
+  #progress { margin: 20px 0; }
+  .bar-bg { background: #111; border-radius: 4px; height: 6px; margin-bottom: 16px; }
+  .bar-fill { background: #E8FF47; height: 6px; border-radius: 4px; transition: width 0.3s; }
+  #status { font-size: 11px; color: #666; margin-bottom: 16px; }
+  #log { font-size: 10px; line-height: 1.8; max-height: 400px; overflow-y: auto; }
+  .ok { color: #88ffcc; }
+  .err { color: #ff6666; }
+  .wait { color: #666; }
+  .head { color: #E8FF47; margin-top: 12px; }
+</style>
+</head>
+<body>
+<h1>📊 Intel Batch Runner</h1>
+<p>Runs all 64 company × focus combinations one at a time. Takes ~20 minutes. Don't close this tab.</p>
+
+<div>
+  <button id="startBtn" onclick="start()">▶ Start</button>
+  <button id="stopBtn" onclick="stop()" disabled>■ Stop</button>
+</div>
+
+<div id="progress" style="display:none">
+  <div class="bar-bg"><div class="bar-fill" id="bar" style="width:0%"></div></div>
+  <div id="status">Starting...</div>
+</div>
+
+<div id="log"></div>
+
+<script>
+const BASE = "";
+const KEY = "dropbox2026";
+const DELAY = 18000;
+
+const COMPANIES = ["notion","airtable","canva","figma","miro","asana","monday","hubspot"];
+const FOCUSES = ["advocacy","champion","case_studies","events","clg","ugc","peer","retention"];
+
+let running = false;
+let pairs = [];
+for (const c of COMPANIES) for (const f of FOCUSES) pairs.push([c, f]);
+
+function log(msg, cls) {
+  const div = document.getElementById("log");
+  div.innerHTML += `<div class="${cls||''}">${msg}</div>`;
+  div.scrollTop = div.scrollHeight;
+}
+
+function setStatus(msg) {
+  document.getElementById("status").textContent = msg;
+}
+
+function setBar(pct) {
+  document.getElementById("bar").style.width = pct + "%";
+}
+
+async function start() {
+  running = true;
+  document.getElementById("startBtn").disabled = true;
+  document.getElementById("stopBtn").disabled = false;
+  document.getElementById("progress").style.display = "block";
+  document.getElementById("log").innerHTML = "";
+
+  const todo = [...pairs];
+  let done = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  log(`<span class="head">Starting ${todo.length} requests — one every ${DELAY/1000}s</span>`);
+
+  for (const [company, focus] of todo) {
+    if (!running) { log("— Stopped by user —", "wait"); break; }
+
+    setStatus(`Processing ${done+1} of ${todo.length}: ${company} / ${focus}...`);
+
+    let attempts = 0;
+    let success = false;
+
+    while (attempts < 3 && !success) {
+      try {
+        const res = await fetch(`${BASE}/api/refresh?key=${KEY}&company=${company}&focus=${focus}`);
+        const data = await res.json();
+        const result = data.results?.[0];
+
+        if (result?.status === "ok") {
+          log(`✦ ${company} / ${focus} — ok`, "ok");
+          succeeded++;
+          success = true;
+        } else {
+          const err = result?.error || "unknown";
+          if (err.includes("429") && attempts < 2) {
+            log(`⏳ ${company} / ${focus} — rate limit, waiting 60s...`, "wait");
+            await sleep(60000);
+            attempts++;
+          } else if (err.includes("Unexpected end") && attempts < 2) {
+            log(`↺ ${company} / ${focus} — retry ${attempts+1}...`, "wait");
+            await sleep(5000);
+            attempts++;
+          } else {
+            log(`✕ ${company} / ${focus} — ${err.slice(0,80)}`, "err");
+            failed++;
+            success = true;
+          }
+        }
+      } catch(e) {
+        log(`✕ ${company} / ${focus} — fetch error: ${e.message}`, "err");
+        failed++;
+        success = true;
+      }
+    }
+
+    done++;
+    setBar(Math.round(done / todo.length * 100));
+
+    if (done < todo.length && running) {
+      log(`<span class="wait">  waiting ${DELAY/1000}s...</span>`);
+      await sleep(DELAY);
+    }
+  }
+
+  setStatus(`Done! ${succeeded} succeeded, ${failed} failed out of ${done} processed.`);
+  log(`<span class="head">Complete — ${succeeded}/${done} succeeded</span>`);
+  document.getElementById("startBtn").disabled = false;
+  document.getElementById("stopBtn").disabled = true;
+  running = false;
+}
+
+function stop() {
+  running = false;
+  document.getElementById("stopBtn").disabled = true;
+  document.getElementById("startBtn").disabled = false;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
