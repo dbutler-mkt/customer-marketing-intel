@@ -1,5 +1,6 @@
 export const config = {
   api: { bodyParser: true },
+  maxDuration: 60,
 };
 
 export default async function handler(req, res) {
@@ -29,7 +30,6 @@ export default async function handler(req, res) {
   };
 
   try {
-    // Try up to 3 times with backoff on 429/529
     let last;
     for (let i = 0; i < 3; i++) {
       last = await attempt();
