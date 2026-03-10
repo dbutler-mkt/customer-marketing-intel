@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const COMPANIES = [
   { id: "notion",   name: "Notion",      color: "#888",    emoji: "◼" },
@@ -23,12 +23,42 @@ const FOCUS_AREAS = [
 const STAGES = [
   { label: "Connecting to search",  pct: 8,  duration: 800  },
   { label: "Searching the web",     pct: 35, duration: 5000 },
-  { label: "Reading results",       pct: 60, duration: 3000 },
-  { label: "Analyzing programs",    pct: 80, duration: 2000 },
-  { label: "Building summary",      pct: 93, duration: 1500 },
+  { label: "Reading results",       pct: 60, duration: 3500 },
+  { label: "Analyzing programs",    pct: 80, duration: 2500 },
+  { label: "Building summary",      pct: 93, duration: 2000 },
 ];
 
 const CACHE = {};
+
+function extractSources(content) {
+  const sources = [];
+  for (const block of (content || [])) {
+    if (block.type === "tool_result") {
+      for (const inner of (block.content || [])) {
+        if (inner.type === "document" && inner.document?.url) {
+          const url = inner.document.url;
+          const title = inner.document?.title || url;
+          if (!sources.find(s => s.url === url)) {
+            sources.push({ url, title });
+          }
+        }
+      }
+    }
+    if (block.type === "tool_result" && typeof block.content === "string") {
+      try {
+        const parsed = JSON.parse(block.content);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item.url && !sources.find(s => s.url === item.url)) {
+              sources.push({ url: item.url, title: item.title || item.url });
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+  return sources.slice(0, 5);
+}
 
 async function fetchIntel(company, focusArea, deep = false) {
   const systemPrompt = deep
@@ -56,14 +86,15 @@ maturity must be: emerging, growing, or mature`;
 
   if (!res.ok) throw new Error(`API ${res.status}`);
   const data = await res.json();
+  const sources = extractSources(data.content);
   const allText = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
   if (!allText) throw new Error("No text in response");
 
   const tagged = allText.match(/<json>([\s\S]*?)<\/json>/);
-  if (tagged) return JSON.parse(tagged[1].trim());
+  if (tagged) return { ...JSON.parse(tagged[1].trim()), sources };
 
   const lb = allText.lastIndexOf("}"), fb = allText.lastIndexOf("{", lb);
-  if (fb !== -1 && lb !== -1) return JSON.parse(allText.slice(fb, lb + 1));
+  if (fb !== -1 && lb !== -1) return { ...JSON.parse(allText.slice(fb, lb + 1)), sources };
   throw new Error("No JSON found");
 }
 
@@ -75,10 +106,7 @@ function useProgress(isLoading) {
 
   useEffect(() => {
     if (!isLoading) {
-      if (pct > 0) {
-        setPct(100);
-        setTimeout(() => { setPct(0); setStageIdx(0); stageRef.current = 0; }, 500);
-      }
+      if (pct > 0) { setPct(100); setTimeout(() => { setPct(0); setStageIdx(0); stageRef.current = 0; }, 500); }
       return;
     }
     setPct(0); setStageIdx(0); stageRef.current = 0;
@@ -86,9 +114,7 @@ function useProgress(isLoading) {
       const idx = stageRef.current;
       if (idx >= STAGES.length) return;
       const stage = STAGES[idx];
-      setPct(stage.pct);
-      setStageIdx(idx);
-      stageRef.current = idx + 1;
+      setPct(stage.pct); setStageIdx(idx); stageRef.current = idx + 1;
       timerRef.current = setTimeout(advance, stage.duration);
     };
     timerRef.current = setTimeout(advance, 100);
@@ -98,20 +124,32 @@ function useProgress(isLoading) {
   return { pct, stageLabel: STAGES[stageIdx]?.label || "" };
 }
 
-function matColor(m) {
-  return m === "mature" ? "#E8FF47" : m === "growing" ? "#88ffcc" : "#ff9944";
-}
-function accent(c) {
-  return ["#000000","#888","#111"].includes(c.color) ? "#E8FF47" : c.color;
-}
+function matColor(m) { return m === "mature" ? "#E8FF47" : m === "growing" ? "#88ffcc" : "#ff9944"; }
+function accent(c) { return ["#000000","#888","#111"].includes(c.color) ? "#E8FF47" : c.color; }
 
 function Badge({ label, color }) {
+  return <span style={{ background:color, color:"#000", fontSize:"9px", fontFamily:"'DM Mono',monospace", padding:"3px 8px", borderRadius:"3px", textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:"700" }}>{label}</span>;
+}
+
+function Sources({ sources }) {
+  if (!sources?.length) return null;
   return (
-    <span style={{
-      background: color, color: "#000", fontSize: "9px",
-      fontFamily: "'DM Mono',monospace", padding: "3px 8px",
-      borderRadius: "3px", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: "700",
-    }}>{label}</span>
+    <div style={{ borderTop:"1px solid #141414", paddingTop:"10px", marginTop:"10px" }}>
+      <div style={{ color:"#2a2a2a", fontSize:"9px", fontFamily:"'DM Mono',monospace", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:"6px" }}>Sources</div>
+      {sources.map((s, i) => {
+        let domain = s.url;
+        try { domain = new URL(s.url).hostname.replace("www.", ""); } catch {}
+        return (
+          <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" style={{
+            display:"block", color:"#333", fontSize:"10px", fontFamily:"'DM Mono',monospace",
+            textDecoration:"none", marginBottom:"4px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = "#666"}
+          onMouseLeave={e => e.currentTarget.style.color = "#333"}
+          >↗ {domain}</a>
+        );
+      })}
+    </div>
   );
 }
 
@@ -137,9 +175,7 @@ function LoadingCard({ company, focusArea }) {
         </div>
       </div>
       <div style={{ marginTop:"18px" }}>
-        {[80,60,70,45].map((w,i) => (
-          <div key={i} style={{ height:"9px", width:`${w}%`, background:"#141414", borderRadius:"3px", marginBottom:"8px", animation:`shimmer 1.8s ease-in-out ${i*0.15}s infinite` }}/>
-        ))}
+        {[80,60,70,45].map((w,i) => <div key={i} style={{ height:"9px", width:`${w}%`, background:"#141414", borderRadius:"3px", marginBottom:"8px", animation:`shimmer 1.8s ease-in-out ${i*0.15}s infinite` }}/>)}
       </div>
     </div>
   );
@@ -147,11 +183,7 @@ function LoadingCard({ company, focusArea }) {
 
 function IntelCard({ company, focusArea, data, error, onDrillDown }) {
   const ac = accent(company);
-  if (error) return (
-    <div style={{ ...card, borderColor:"#220e0e" }}>
-      <div style={{ color:"#ff4444", fontSize:"11px", fontFamily:"'DM Mono',monospace" }}>✕ Could not retrieve intel</div>
-    </div>
-  );
+  if (error) return <div style={{ ...card, borderColor:"#220e0e" }}><div style={{ color:"#ff4444", fontSize:"11px", fontFamily:"'DM Mono',monospace" }}>✕ Could not retrieve intel</div></div>;
   if (!data) return null;
   return (
     <div style={card}>
@@ -180,8 +212,9 @@ function IntelCard({ company, focusArea, data, error, onDrillDown }) {
           <span style={{ color:"#E8FF47", fontSize:"10px", fontFamily:"'DM Mono',monospace", lineHeight:"1.5", fontStyle:"italic" }}>{data.trend}</span>
         </div>
       )}
+      <Sources sources={data.sources} />
       <button onClick={onDrillDown}
-        style={{ width:"100%", background:"transparent", border:`1px solid ${ac}2a`, color:ac, padding:"7px", borderRadius:"4px", fontSize:"9px", fontFamily:"'DM Mono',monospace", textTransform:"uppercase", letterSpacing:"0.1em", cursor:"pointer", transition:"all 0.15s" }}
+        style={{ width:"100%", background:"transparent", border:`1px solid ${ac}2a`, color:ac, padding:"7px", borderRadius:"4px", fontSize:"9px", fontFamily:"'DM Mono',monospace", textTransform:"uppercase", letterSpacing:"0.1em", cursor:"pointer", transition:"all 0.15s", marginTop:"12px" }}
         onMouseEnter={e=>{ e.currentTarget.style.background=`${ac}12`; e.currentTarget.style.borderColor=`${ac}88`; }}
         onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; e.currentTarget.style.borderColor=`${ac}2a`; }}
       >↳ Deep Dive</button>
@@ -217,6 +250,7 @@ function DeepModal({ company, focusArea, onClose }) {
           </div>
           <button onClick={onClose} style={{ background:"none", border:"1px solid #222", color:"#444", width:"28px", height:"28px", borderRadius:"4px", cursor:"pointer", fontSize:"12px" }}>✕</button>
         </div>
+
         {state === "loading" && (
           <div>
             <div style={{ height:"2px", background:"#181818", borderRadius:"2px", overflow:"hidden", marginBottom:"10px" }}>
@@ -227,20 +261,21 @@ function DeepModal({ company, focusArea, onClose }) {
               <span style={{ color:"#2a2a2a", fontSize:"10px", fontFamily:"'DM Mono',monospace" }}>{pct}%</span>
             </div>
             <div style={{ marginTop:"20px" }}>
-              {[90,70,80,55,65].map((w,i) => (
-                <div key={i} style={{ height:"9px", width:`${w}%`, background:"#141414", borderRadius:"3px", marginBottom:"8px", animation:`shimmer 1.8s ease-in-out ${i*0.15}s infinite` }}/>
-              ))}
+              {[90,70,80,55,65].map((w,i) => <div key={i} style={{ height:"9px", width:`${w}%`, background:"#141414", borderRadius:"3px", marginBottom:"8px", animation:`shimmer 1.8s ease-in-out ${i*0.15}s infinite` }}/>)}
             </div>
           </div>
         )}
+
         {state === "error" && (
           <div>
             <div style={{ color:"#ff4444", fontSize:"12px", fontFamily:"'DM Mono',monospace", marginBottom:"6px" }}>✕ Could not load deep intel</div>
             <div style={{ color:"#444", fontSize:"10px", fontFamily:"'DM Mono',monospace", wordBreak:"break-all" }}>{errMsg}</div>
           </div>
         )}
+
         {state === "done" && data && <>
           <p style={{ color:"#bbb", fontSize:"13px", lineHeight:"1.7", fontFamily:"'DM Sans',sans-serif", marginBottom:"18px" }}>{data.summary}</p>
+
           <div style={{ marginBottom:"18px" }}>
             <div style={sl}>Key Findings</div>
             {(data.highlights||[]).map((h,i) => (
@@ -250,6 +285,7 @@ function DeepModal({ company, focusArea, onClose }) {
               </div>
             ))}
           </div>
+
           {(data.programs||[]).length > 0 && (
             <div style={{ marginBottom:"18px" }}>
               <div style={sl}>Named Programs</div>
@@ -264,19 +300,24 @@ function DeepModal({ company, focusArea, onClose }) {
               ))}
             </div>
           )}
+
           {data.trend && (
             <div style={{ background:"#111", borderRadius:"6px", padding:"12px 14px", marginBottom:"12px" }}>
               <div style={sl}>Strategic Direction</div>
               <div style={{ color:ac, fontSize:"11px", fontFamily:"'DM Mono',monospace", lineHeight:"1.6", fontStyle:"italic" }}>{data.trend}</div>
             </div>
           )}
+
           {data.takeaway && (
             <div style={{ background:`${ac}0a`, border:`1px solid ${ac}2a`, borderRadius:"6px", padding:"13px 15px", marginBottom:"18px" }}>
               <div style={{ ...sl, color:ac }}>◈ So What</div>
               <div style={{ color:"#ccc", fontSize:"12px", fontFamily:"'DM Sans',sans-serif", lineHeight:"1.65" }}>{data.takeaway}</div>
             </div>
           )}
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingTop:"14px", borderTop:"1px solid #181818" }}>
+
+          <Sources sources={data.sources} />
+
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingTop:"14px", borderTop:"1px solid #181818", marginTop:"14px" }}>
             <Badge label={data.maturity} color={matColor(data.maturity)} />
             <span style={{ color:"#252525", fontSize:"9px", fontFamily:"'DM Mono',monospace" }}>cached for session</span>
           </div>
@@ -297,9 +338,7 @@ export default function App() {
 
   const focusArea = FOCUS_AREAS.find(f => f.id === selectedFocus);
   const isRunning = loadingSet.size > 0;
-
-  const toggleCompany = id =>
-    setSelectedCompanies(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  const toggleCompany = id => setSelectedCompanies(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
 
   const runSearch = async () => {
     setHasSearched(true);
@@ -323,7 +362,7 @@ export default function App() {
       const id = toFetch[i];
       const company = COMPANIES.find(c => c.id === id);
       const key = `${id}-${selectedFocus}`;
-      if (i > 0) await new Promise(r => setTimeout(r, 800));
+      if (i > 0) await new Promise(r => setTimeout(r, 1000));
       fetchIntel(company, focusArea, false)
         .then(data => { CACHE[key] = data; setResults(prev => ({ ...prev, [key]: { data } })); })
         .catch(() => { setResults(prev => ({ ...prev, [key]: { error: true } })); })
@@ -344,9 +383,7 @@ export default function App() {
         @keyframes fadeUp{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
         .ic{animation:fadeUp .3s ease both}
         .rbtn:hover:not(:disabled){background:#d4f03d!important;transform:translateY(-1px)}
-        ::-webkit-scrollbar{width:3px}
-        ::-webkit-scrollbar-track{background:#0d0d0d}
-        ::-webkit-scrollbar-thumb{background:#1e1e1e;border-radius:4px}
+        ::-webkit-scrollbar{width:3px} ::-webkit-scrollbar-track{background:#0d0d0d} ::-webkit-scrollbar-thumb{background:#1e1e1e;border-radius:4px}
       `}</style>
 
       <div style={{ borderBottom:"1px solid #131313", padding:"22px 34px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -370,44 +407,21 @@ export default function App() {
             {COMPANIES.map(c => {
               const sel = selectedCompanies.includes(c.id);
               const isCached = !!CACHE[`${c.id}-${selectedFocus}`];
-              return (
-                <button key={c.id} onClick={() => toggleCompany(c.id)} style={{
-                  background: sel ? c.color : "transparent",
-                  border: `1.5px solid ${sel ? c.color : isCached ? "#242424" : "#191919"}`,
-                  color: sel ? (c.color === "#FFD02F" ? "#000" : "#fff") : isCached ? "#484848" : "#303030",
-                  padding:"4px 12px", borderRadius:"20px", fontSize:"11px",
-                  fontFamily:"'DM Mono',monospace", cursor:"pointer", transition:"all 0.15s",
-                }}>{c.emoji} {c.name}</button>
-              );
+              return <button key={c.id} onClick={() => toggleCompany(c.id)} style={{ background:sel?c.color:"transparent", border:`1.5px solid ${sel?c.color:isCached?"#242424":"#191919"}`, color:sel?(c.color==="#FFD02F"?"#000":"#fff"):isCached?"#484848":"#303030", padding:"4px 12px", borderRadius:"20px", fontSize:"11px", fontFamily:"'DM Mono',monospace", cursor:"pointer", transition:"all 0.15s" }}>{c.emoji} {c.name}</button>;
             })}
           </div>
         </div>
         <div style={{ marginBottom:"18px" }}>
           <div style={{ color:"#2e2e2e", fontSize:"9px", fontFamily:"'DM Mono',monospace", textTransform:"uppercase", letterSpacing:"0.12em", marginBottom:"8px" }}>Focus Area</div>
           <div style={{ display:"flex", flexWrap:"wrap", gap:"5px" }}>
-            {FOCUS_AREAS.map(a => (
-              <button key={a.id} onClick={() => setSelectedFocus(a.id)} style={{
-                background: selectedFocus === a.id ? "#E8FF47" : "transparent",
-                border: `1px solid ${selectedFocus === a.id ? "#E8FF47" : "#191919"}`,
-                color: selectedFocus === a.id ? "#000" : "#383838",
-                padding:"4px 10px", borderRadius:"4px", fontSize:"9px",
-                fontFamily:"'DM Mono',monospace", cursor:"pointer",
-                textTransform:"uppercase", letterSpacing:"0.08em", transition:"all 0.15s",
-              }}>{a.label}</button>
-            ))}
+            {FOCUS_AREAS.map(a => <button key={a.id} onClick={() => setSelectedFocus(a.id)} style={{ background:selectedFocus===a.id?"#E8FF47":"transparent", border:`1px solid ${selectedFocus===a.id?"#E8FF47":"#191919"}`, color:selectedFocus===a.id?"#000":"#383838", padding:"4px 10px", borderRadius:"4px", fontSize:"9px", fontFamily:"'DM Mono',monospace", cursor:"pointer", textTransform:"uppercase", letterSpacing:"0.08em", transition:"all 0.15s" }}>{a.label}</button>)}
           </div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:"14px" }}>
-          <button className="rbtn" onClick={runSearch} disabled={!selectedCompanies.length || isRunning} style={{
-            background:"#E8FF47", color:"#000", border:"none", padding:"9px 22px",
-            borderRadius:"5px", fontSize:"10px", fontFamily:"'DM Mono',monospace", fontWeight:500,
-            textTransform:"uppercase", letterSpacing:"0.1em",
-            cursor:(!selectedCompanies.length || isRunning) ? "not-allowed" : "pointer",
-            opacity:!selectedCompanies.length ? 0.25 : isRunning ? 0.55 : 1, transition:"all 0.15s",
-          }}>
-            {isRunning ? `⟳ Searching (${loadingSet.size} left)…` : `⟳ Run Search — ${selectedCompanies.length} companies`}
+          <button className="rbtn" onClick={runSearch} disabled={!selectedCompanies.length||isRunning} style={{ background:"#E8FF47", color:"#000", border:"none", padding:"9px 22px", borderRadius:"5px", fontSize:"10px", fontFamily:"'DM Mono',monospace", fontWeight:500, textTransform:"uppercase", letterSpacing:"0.1em", cursor:(!selectedCompanies.length||isRunning)?"not-allowed":"pointer", opacity:!selectedCompanies.length?0.25:isRunning?0.55:1, transition:"all 0.15s" }}>
+            {isRunning?`⟳ Searching (${loadingSet.size} left)…`:`⟳ Run Search — ${selectedCompanies.length} companies`}
           </button>
-          {isRunning && <span style={{ color:"#2a2a2a", fontSize:"9px", fontFamily:"'DM Mono',monospace" }}>~8–15s per card · staggered to avoid limits</span>}
+          {isRunning && <span style={{ color:"#2a2a2a", fontSize:"9px", fontFamily:"'DM Mono',monospace" }}>~15–25s per card · staggered</span>}
         </div>
       </div>
 
@@ -416,7 +430,7 @@ export default function App() {
           <div style={{ textAlign:"center", padding:"60px 0", color:"#1a1a1a" }}>
             <div style={{ fontSize:"32px", marginBottom:"12px" }}>◈</div>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:"10px", letterSpacing:"0.1em", textTransform:"uppercase" }}>Select companies &amp; focus area, then run search</div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:"9px", marginTop:"6px", color:"#141414" }}>First run ~8–15s · repeat searches load instantly from cache</div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:"9px", marginTop:"6px", color:"#141414" }}>First run ~15–25s · repeat searches load instantly from cache</div>
           </div>
         ) : (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(320px, 1fr))", gap:"12px" }}>
