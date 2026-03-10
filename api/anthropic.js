@@ -1,7 +1,5 @@
 export const config = {
-  api: {
-    bodyParser: true,
-  },
+  api: { bodyParser: true },
 };
 
 export default async function handler(req, res) {
@@ -13,9 +11,9 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'API key not configured on server' });
+  if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
 
-  try {
+  const attempt = async () => {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -26,14 +24,19 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify(req.body),
     });
-
     const data = await response.json();
+    return { status: response.status, data };
+  };
 
-    if (!response.ok) {
-      console.error('Anthropic error:', response.status, JSON.stringify(data));
+  try {
+    // Try up to 3 times with backoff on 429/529
+    let last;
+    for (let i = 0; i < 3; i++) {
+      last = await attempt();
+      if (last.status !== 429 && last.status !== 529) break;
+      await new Promise(r => setTimeout(r, 1500 * (i + 1)));
     }
-
-    return res.status(response.status).json(data);
+    return res.status(last.status).json(last.data);
   } catch (err) {
     console.error('Proxy error:', err.message);
     return res.status(500).json({ error: err.message });
