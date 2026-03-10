@@ -94,7 +94,7 @@ async function supabaseRequest(path, method, body) {
       "Content-Type": "application/json",
       "apikey": process.env.SUPABASE_SERVICE_KEY,
       "Authorization": `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
-      "Prefer": method === "POST" ? "resolution=merge-duplicates" : "",
+      "Prefer": method === "POST" ? "resolution=merge-duplicates,return=minimal" : "",
     },
     body: body ? JSON.stringify(body) : undefined,
   });
