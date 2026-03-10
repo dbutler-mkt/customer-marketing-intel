@@ -47,7 +47,10 @@ maturity must be exactly: emerging, growing, or mature`;
     }),
   });
 
-  if (!res.ok) throw new Error(`Anthropic API ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Anthropic API ${res.status}: ${errText}`);
+  }
   const data = await res.json();
 
   const sources = [];
@@ -64,12 +67,24 @@ maturity must be exactly: emerging, growing, or mature`;
   }
 
   const allText = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
-  const tagged = allText.match(/<json>([\s\S]*?)<\/json>/);
-  if (tagged) return { ...JSON.parse(tagged[1].trim()), sources };
 
-  const lb = allText.lastIndexOf("}"), fb = allText.lastIndexOf("{", lb);
-  if (fb !== -1 && lb !== -1) return { ...JSON.parse(allText.slice(fb, lb + 1)), sources };
-  throw new Error("No JSON found");
+  const tagged = allText.match(/<json>([\s\S]*?)<\/json>/);
+  if (tagged) {
+    try { return { ...JSON.parse(tagged[1].trim()), sources }; } catch(e) {}
+  }
+
+  const jsonMatch = allText.match(/\{[\s\S]*"summary"[\s\S]*\}/);
+  if (jsonMatch) {
+    try { return { ...JSON.parse(jsonMatch[0]), sources }; } catch(e) {}
+  }
+
+  const lb = allText.lastIndexOf("}");
+  const fb = allText.lastIndexOf("{", lb);
+  if (fb !== -1 && lb !== -1) {
+    try { return { ...JSON.parse(allText.slice(fb, lb + 1)), sources }; } catch(e) {}
+  }
+
+  return { summary: allText.slice(0, 300), highlights: [], trend: "", programs: [], takeaway: "", maturity: "emerging", sources };
 }
 
 async function supabaseRequest(path, method, body) {
