@@ -88,15 +88,13 @@ maturity must be exactly: emerging, growing, or mature`;
 }
 
 async function supabaseRequest(path, method, body) {
-  const isUpsert = method === "POST" && (path.startsWith("intel_results") || path.startsWith("intel_snapshots"));
   const res = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${path}`, {
-    method: isUpsert ? "POST" : method,
+    method,
     headers: {
       "Content-Type": "application/json",
       "apikey": process.env.SUPABASE_SERVICE_KEY,
       "Authorization": `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
-      "Prefer": isUpsert ? "resolution=merge-duplicates" : "",
-      "x-upsert": isUpsert ? "true" : "false",
+      "Prefer": "resolution=merge-duplicates",
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -215,7 +213,7 @@ export default async function handler(req, res) {
 
       const result = await fetchIntel(company, focusArea);
 
-      await supabaseRequest("intel_results", "POST", {
+      await supabaseRequest("intel_results?on_conflict=company_id,focus_area_id", "POST", {
         company_id: company.id,
         focus_area_id: focusArea.id,
         summary: result.summary,
@@ -228,7 +226,7 @@ export default async function handler(req, res) {
         fetched_at: new Date().toISOString(),
       });
 
-      await supabaseRequest("intel_snapshots", "POST", {
+      await supabaseRequest("intel_snapshots?on_conflict=company_id,focus_area_id,snapshot_date", "POST", {
         company_id: company.id,
         focus_area_id: focusArea.id,
         summary: result.summary,
