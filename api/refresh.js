@@ -88,13 +88,15 @@ maturity must be exactly: emerging, growing, or mature`;
 }
 
 async function supabaseRequest(path, method, body) {
+  const isUpsert = method === "POST" && (path.startsWith("intel_results") || path.startsWith("intel_snapshots"));
   const res = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${path}`, {
-    method,
+    method: isUpsert ? "POST" : method,
     headers: {
       "Content-Type": "application/json",
       "apikey": process.env.SUPABASE_SERVICE_KEY,
       "Authorization": `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
-      "Prefer": method === "POST" ? "resolution=merge-duplicates,return=minimal" : "",
+      "Prefer": isUpsert ? "resolution=merge-duplicates" : "",
+      "x-upsert": isUpsert ? "true" : "false",
     },
     body: body ? JSON.stringify(body) : undefined,
   });
